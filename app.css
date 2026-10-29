@@ -272,14 +272,22 @@ dialog#sheet {
 dialog#sheet[open] { display: flex; flex-direction: column; }
 dialog::backdrop { background: var(--backdrop); }
 
+/* Phones: forms open full-screen and shrink to the space above the keyboard
+   (--vv-height / --vv-top are set from window.visualViewport in app.js) */
 @media (max-width: 600px) {
   dialog#sheet {
-    width: 100vw; max-width: 100vw;
-    margin: auto 0 0;
-    max-height: calc(100dvh - env(safe-area-inset-top) - 12px);
-    border-radius: 20px 20px 0 0;
+    inset: 0 auto auto 0;
+    margin: 0;
+    width: 100%; max-width: 100%;
+    height: var(--vv-height, 100dvh); max-height: none;
+    transform: translateY(var(--vv-top, 0px));
+    border-radius: 0;
   }
+  dialog#sheet .sheet-head { padding-top: calc(env(safe-area-inset-top) + 6px); }
+  dialog#sheet.keyboard .sheet-head { padding-top: 6px; }
+  dialog#sheet.keyboard .sheet-body { padding-bottom: 24px; }
 }
+html.sheet-open, html.sheet-open body { overflow: hidden; }
 
 .sheet-form { display: flex; flex-direction: column; min-height: 0; flex: 1; margin: 0; }
 

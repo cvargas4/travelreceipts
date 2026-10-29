@@ -3,7 +3,7 @@
 'use strict';
 
 (() => {
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   const CATEGORIES = ['Food', 'Hotel', 'Airfare', 'Transportation', 'Registration', 'Other'];
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'CHF', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'KRW',
     'INR', 'THB', 'BRL', 'ZAR', 'SEK', 'NOK', 'DKK', 'ISK', 'PLN', 'CZK', 'HUF', 'TRY', 'ILS', 'AED'];
@@ -416,10 +416,41 @@
   let sheetCleanup = [];
   let sheetBeforeClose = null;
 
+  // iOS doesn't resize the page when the keyboard opens; it only shrinks the "visual viewport".
+  // Keep the sheet sized and positioned to that visible area so fields never sit under the keyboard.
+  const vv = window.visualViewport;
+  function syncViewport() {
+    if (!vv) return;
+    const root = document.documentElement.style;
+    root.setProperty('--vv-height', `${Math.round(vv.height)}px`);
+    root.setProperty('--vv-top', `${Math.round(vv.offsetTop)}px`);
+    sheet.classList.toggle('keyboard', window.innerHeight - vv.height > 120);
+  }
+  if (vv) {
+    vv.addEventListener('resize', syncViewport);
+    vv.addEventListener('scroll', syncViewport);
+  }
+
+  function keepFieldVisible(el) {
+    const body = el.closest('.sheet-body');
+    if (!body) return;
+    const r = el.getBoundingClientRect(), b = body.getBoundingClientRect();
+    if (r.top < b.top + 12 || r.bottom > b.bottom - 12) {
+      body.scrollTop += r.top - b.top - Math.min(96, b.height / 4);
+    }
+  }
+  sheet.addEventListener('focusin', (e) => {
+    if (!e.target.matches('input, textarea, select')) return;
+    // run after the keyboard has finished opening
+    setTimeout(() => { syncViewport(); keepFieldVisible(e.target); }, 350);
+  });
+
   function openSheet(html) {
     runSheetCleanup();
     sheetBeforeClose = null;
     sheet.innerHTML = html;
+    syncViewport();
+    document.documentElement.classList.add('sheet-open');
     if (!sheet.open) sheet.showModal();
     sheet.scrollTop = 0;
     return sheet;
@@ -433,7 +464,11 @@
     sheetBeforeClose = null;
     if (sheet.open) sheet.close();
   }
-  sheet.addEventListener('close', () => { runSheetCleanup(); sheet.innerHTML = ''; });
+  sheet.addEventListener('close', () => {
+    runSheetCleanup();
+    sheet.innerHTML = '';
+    document.documentElement.classList.remove('sheet-open');
+  });
   sheet.addEventListener('cancel', (e) => { e.preventDefault(); closeSheet(); });
   sheet.addEventListener('click', (e) => {
     if (e.target === sheet) closeSheet();
@@ -637,7 +672,7 @@
         '<button type="submit" class="text-btn strong">Save</button>')}
       <div class="sheet-body">
         <label class="field"><span>Conference or trip name</span>
-          <input name="name" required autocomplete="off" ${t ? '' : 'autofocus'} placeholder="e.g. ASCB Annual Meeting 2026" value="${esc(t?.name)}"></label>
+          <input name="name" required autocomplete="off" ${t || isTouch() ? '' : 'autofocus'} placeholder="e.g. ASCB Annual Meeting 2026" value="${esc(t?.name)}"></label>
         <label class="field"><span>Conference website</span>
           <input name="url" type="url" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="https://" value="${esc(t?.url)}"></label>
         <div class="row">
