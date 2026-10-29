@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#EEF2F0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F1619" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Receipts">
+  <meta name="description" content="Collect conference travel receipts and export an expense spreadsheet and PDF.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="app.css">
+  <title>Trip Receipts</title>
+</head>
+<body>
+  <div id="app"></div>
+  <dialog id="sheet"></dialog>
+  <dialog id="viewer" aria-label="Receipt preview"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="import-input" class="sr-only" accept=".json,application/json" tabindex="-1" aria-hidden="true">
+  <noscript>This app needs JavaScript turned on.</noscript>
+  <script src="app.js"></script>
+</body>
+</html>

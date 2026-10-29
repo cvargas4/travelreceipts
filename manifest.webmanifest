@@ -1,0 +1,14 @@
+{
+  "name": "Trip Receipts",
+  "short_name": "Receipts",
+  "description": "Collect conference travel receipts and export an expense spreadsheet and PDF.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EEF2F0",
+  "theme_color": "#EEF2F0",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
