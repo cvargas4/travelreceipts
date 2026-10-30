@@ -1,3 +1,7 @@
+## Claude-coded (Opus 5.5) receipt tracker for conferences.
+
+-----------
+
 # Trip Receipts
 
 A small web app for collecting conference travel receipts on your phone or computer, then exporting everything your finance office needs in one step:
