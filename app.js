@@ -3,7 +3,7 @@
 'use strict';
 
 (() => {
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   const CATEGORIES = ['Food', 'Hotel', 'Airfare', 'Transportation', 'Registration', 'Other'];
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'CHF', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'KRW',
     'INR', 'THB', 'BRL', 'ZAR', 'SEK', 'NOK', 'DKK', 'ISK', 'PLN', 'CZK', 'HUF', 'TRY', 'ILS', 'AED'];
@@ -1321,10 +1321,18 @@
     const ws = wb.addWorksheet('Expenses', {
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } },
     });
-    ws.columns = [
-      { width: 17 }, { width: 14 }, { width: 15 }, { width: 32 }, { width: 38 }, { width: 13 },
-      { width: 10 }, { width: 15 }, { width: 30 }, { width: 15 }, { width: 11 },
-    ];
+    // Exchange-rate columns only appear when the trip has a purchase in another currency
+    const fx = entries.some(isForeign);
+    const COL = fx
+      ? { rate: 8, source: 9, usd: 10, pages: 11 }
+      : { rate: 0, source: 0, usd: 8, pages: 9 };
+    const LABEL = COL.usd - 1; // totals are labelled in the column just left of Amount (USD)
+    const LAST = COL.pages;
+    const letter = (c) => String.fromCharCode(64 + c);
+    const U = letter(COL.usd);
+    ws.columns = fx
+      ? [17, 14, 15, 32, 38, 13, 10, 15, 30, 15, 11].map((width) => ({ width }))
+      : [17, 14, 15, 32, 38, 13, 17, 15, 11].map((width) => ({ width }));
     const xlDate = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
     const LINK = { color: { argb: 'FF1155CC' }, underline: true };
 
@@ -1341,7 +1349,6 @@
     if (when) info.push(['Dates:', when]);
     if (trip.location) info.push(['Location:', trip.location]);
     if (settings.traveler) info.push(['Traveler:', settings.traveler]);
-    info.push(['Prepared:', fmtDate(todayISO())]);
     for (const [label, value] of info) {
       ws.getCell(r, 1).value = label;
       ws.getCell(r, 1).font = { bold: true };
@@ -1352,13 +1359,14 @@
     r++;
 
     const headRow = r;
-    const headers = ['Receipt #', 'Date', 'Category', 'Vendor / location', 'Details', 'Amount', 'Currency',
-      'Exchange rate (USD per unit)', 'Rate source', 'Amount (USD)', 'PDF page(s)'];
+    const headers = ['Receipt #', 'Date', 'Category', 'Vendor / location', 'Details', 'Amount', 'Currency']
+      .concat(fx ? ['Exchange rate (USD per unit)', 'Rate source'] : [], ['Amount (USD)', 'PDF page(s)']);
+    const rightAligned = new Set([6, COL.rate, COL.usd, COL.pages]);
     headers.forEach((h, i) => {
       const c = ws.getCell(r, i + 1);
       c.value = h;
       c.font = { bold: true };
-      c.alignment = { vertical: 'middle', wrapText: true, horizontal: i >= 5 && i !== 6 && i !== 8 ? 'right' : 'left' };
+      c.alignment = { vertical: 'middle', wrapText: true, horizontal: rightAligned.has(i + 1) ? 'right' : 'left', indent: i + 1 === 7 || i + 1 === COL.source ? 1 : 0 };
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6EEEA' } };
       c.border = { bottom: { style: 'thin', color: { argb: 'FF9AA9A3' } } };
     });
@@ -1381,6 +1389,8 @@
       if (usd != null) { grand += usd; catTotals.set(e.category, (catTotals.get(e.category) || 0) + usd); }
 
       const cells = ws.getRow(r);
+      const usdCell = cells.getCell(COL.usd);
+      const note = (text) => { if (COL.source) cells.getCell(COL.source).value = text; };
       cells.getCell(1).value = k + 1;
       cells.getCell(1).alignment = { horizontal: 'left' };
       cells.getCell(2).value = xlDate(e.date);
@@ -1394,61 +1404,66 @@
       cells.getCell(7).value = e.currency || 'USD';
 
       if (e.amount == null) {
-        cells.getCell(9).value = 'Amount missing';
-        cells.getCell(10).fill = amber;
+        note('Amount missing');
+        usdCell.fill = amber;
       } else if (!isForeign(e)) {
-        cells.getCell(10).value = { formula: `ROUND(F${r},2)`, result: usd };
+        usdCell.value = { formula: `ROUND(F${r},2)`, result: usd };
       } else if (e.usd != null) {
-        cells.getCell(9).value = 'USD charged per card statement';
-        cells.getCell(10).value = round2(e.usd);
+        note('USD charged per card statement');
+        usdCell.value = round2(e.usd);
       } else if (e.rate) {
-        cells.getCell(8).value = e.rate;
-        cells.getCell(8).numFmt = '0.000000';
-        cells.getCell(9).value = e.rateSource === 'Manual' || !e.rateSource
+        cells.getCell(COL.rate).value = e.rate;
+        cells.getCell(COL.rate).numFmt = '0.000000';
+        note(e.rateSource === 'Manual' || !e.rateSource
           ? `Entered manually${e.rateDate ? `, ${fmtDate(e.rateDate)}` : ''}`
-          : `${e.rateSource}, ${fmtDate(e.rateDate || e.date)}`;
-        cells.getCell(10).value = { formula: `ROUND(F${r}*H${r},2)`, result: usd };
+          : `${e.rateSource}, ${fmtDate(e.rateDate || e.date)}`);
+        usdCell.value = { formula: `ROUND(F${r}*${letter(COL.rate)}${r},2)`, result: usd };
       } else {
-        cells.getCell(9).value = 'Rate needed';
-        cells.getCell(8).fill = amber;
-        cells.getCell(10).fill = amber;
+        note('Rate needed');
+        cells.getCell(COL.rate).fill = amber;
+        usdCell.fill = amber;
       }
-      cells.getCell(10).numFmt = '$#,##0.00';
-      cells.getCell(11).value = pageRanges.get(e.id) || 'No receipt';
-      if (!pageRanges.get(e.id)) cells.getCell(11).fill = amber;
-      cells.getCell(11).alignment = { horizontal: 'right' };
-      [4, 5, 9].forEach((c) => { cells.getCell(c).alignment = { wrapText: true, vertical: 'top' }; });
-      [1, 2, 3, 6, 7, 8, 10, 11].forEach((c) => {
+      usdCell.numFmt = '$#,##0.00';
+      const pages = cells.getCell(COL.pages);
+      pages.value = pageRanges.get(e.id) || 'No receipt';
+      if (!pageRanges.get(e.id)) pages.fill = amber;
+      pages.alignment = { horizontal: 'right' };
+      [4, 5, COL.source].filter(Boolean).forEach((c) => { cells.getCell(c).alignment = { wrapText: true, vertical: 'top' }; });
+      for (let c = 1; c <= LAST; c++) {
         cells.getCell(c).alignment = { ...(cells.getCell(c).alignment || {}), vertical: 'top' };
+      }
+      // a little space after the right-aligned number to their left
+      [7, COL.source].filter(Boolean).forEach((c) => {
+        cells.getCell(c).alignment = { ...cells.getCell(c).alignment, horizontal: 'left', indent: 1 };
       });
       r++;
     });
     const last = r - 1;
 
     const totalRow = ws.getRow(r);
-    totalRow.getCell(9).value = 'Total (USD)';
-    totalRow.getCell(9).font = { bold: true };
-    totalRow.getCell(9).alignment = { horizontal: 'right' };
-    totalRow.getCell(10).value = entries.length ? { formula: `SUM(J${first}:J${last})`, result: round2(grand) } : 0;
-    totalRow.getCell(10).numFmt = '$#,##0.00';
-    totalRow.getCell(10).font = { bold: true };
-    for (let c = 1; c <= 11; c++) totalRow.getCell(c).border = { top: { style: 'thin', color: { argb: 'FF5B6A72' } } };
+    totalRow.getCell(LABEL).value = 'Total (USD)';
+    totalRow.getCell(LABEL).font = { bold: true };
+    totalRow.getCell(LABEL).alignment = { horizontal: 'right' };
+    totalRow.getCell(COL.usd).value = entries.length ? { formula: `SUM(${U}${first}:${U}${last})`, result: round2(grand) } : 0;
+    totalRow.getCell(COL.usd).numFmt = '$#,##0.00';
+    totalRow.getCell(COL.usd).font = { bold: true };
+    for (let c = 1; c <= LAST; c++) totalRow.getCell(c).border = { top: { style: 'thin', color: { argb: 'FF5B6A72' } } };
     r += 2;
 
     if (entries.length) {
-      ws.getCell(r, 9).value = 'Totals by category';
-      ws.getCell(r, 9).font = { bold: true };
+      ws.getCell(r, LABEL).value = 'Totals by category';
+      ws.getCell(r, LABEL).font = { bold: true };
       r++;
       const cats = CATEGORIES.filter((c) => entries.some((e) => e.category === c))
         .concat(uniq(entries.map((e) => e.category)).filter((c) => !CATEGORIES.includes(c)));
       for (const c of cats) {
-        ws.getCell(r, 9).value = c;
-        ws.getCell(r, 9).alignment = { horizontal: 'right' };
-        ws.getCell(r, 10).value = {
-          formula: `SUMIF(C${first}:C${last},"${c.replace(/"/g, '""')}",J${first}:J${last})`,
+        ws.getCell(r, LABEL).value = c;
+        ws.getCell(r, LABEL).alignment = { horizontal: 'right' };
+        ws.getCell(r, COL.usd).value = {
+          formula: `SUMIF(C${first}:C${last},"${c.replace(/"/g, '""')}",${U}${first}:${U}${last})`,
           result: round2(catTotals.get(c) || 0),
         };
-        ws.getCell(r, 10).numFmt = '$#,##0.00';
+        ws.getCell(r, COL.usd).numFmt = '$#,##0.00';
         r++;
       }
     }
