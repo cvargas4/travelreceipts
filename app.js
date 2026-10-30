@@ -3,7 +3,7 @@
 'use strict';
 
 (() => {
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const CATEGORIES = ['Food', 'Hotel', 'Airfare', 'Transportation', 'Registration', 'Other'];
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'CHF', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'KRW',
     'INR', 'THB', 'BRL', 'ZAR', 'SEK', 'NOK', 'DKK', 'ISK', 'PLN', 'CZK', 'HUF', 'TRY', 'ILS', 'AED'];
@@ -77,6 +77,18 @@
     try { digits = new Intl.NumberFormat('en-US', { style: 'currency', currency: cur || 'USD' }).resolvedOptions().maximumFractionDigits; } catch { /* keep 2 */ }
     return Number.isInteger(n * 10 ** digits) || Math.abs(n * 10 ** digits - Math.round(n * 10 ** digits)) < 1e-9 ? n.toFixed(digits) : String(n);
   }
+
+  // Speedtypes: the university's 10-digit account numbers. Typed into one field, separated by commas.
+  function parseSpeedtypes(text) {
+    const parts = String(text || '').split(',').map((s) => s.replace(/\s+/g, '')).filter(Boolean);
+    return { list: uniq(parts), bad: parts.filter((p) => !/^\d{10}$/.test(p)) };
+  }
+  const speedtypeError = (bad) => (bad.length === 1
+    ? `“${bad[0]}” isn't a 10-digit Speedtype. Separate more than one with commas.`
+    : `These aren't 10-digit Speedtypes: ${bad.join(', ')}. Separate more than one with commas.`);
+  const speedtypeLine = (list) => (list && list.length ? `${list.length === 1 ? 'Speedtype' : 'Speedtypes'} ${list.join(', ')}` : '');
+  const SPEEDTYPE_INPUT = (value = '') => `<input name="speedtypes" autocomplete="off" autocapitalize="off" spellcheck="false"
+      placeholder="e.g. 1234567890, 2345678901" value="${esc(value)}">`;
 
   function fmtBytes(n) {
     if (n < 1024) return `${n} B`;
@@ -485,15 +497,17 @@
     `<div class="sheet-head">${left}<h2>${esc(title)}</h2>${right}</div>`;
 
   const viewer = $('#viewer');
+  const isAndroid = () => /Android/i.test(navigator.userAgent);
   let viewerFile = null;
   function showImage(buf, type, name = 'Receipt') {
     const url = bufToBlobUrl(buf, type);
     const ext = type === 'image/png' ? 'png' : 'jpg';
     viewerFile = new File([buf], `${String(name).replace(/\.[^.]+$/, '') || 'Receipt'}.${ext}`, { type });
     const canShare = !!(navigator.canShare && navigator.canShare({ files: [viewerFile] }));
+    const label = isAndroid() ? 'Save image' : isTouch() && canShare ? 'Save to Photos' : 'Download';
     viewer.innerHTML = `<img src="${url}" alt="Receipt">
       <div class="viewer-bar">
-        <button type="button" data-save>${isTouch() && canShare ? 'Save to Photos' : 'Download'}</button>
+        <button type="button" data-save>${label}</button>
         <button type="button">Done</button>
       </div>`;
     viewer.showModal();
@@ -501,10 +515,12 @@
   }
   viewer.addEventListener('click', (e) => {
     if (e.target.closest('[data-save]')) {
-      if (viewerFile && navigator.canShare && navigator.canShare({ files: [viewerFile] })) {
+      if (!viewerFile) return;
+      if (!isAndroid() && isTouch() && navigator.canShare && navigator.canShare({ files: [viewerFile] })) {
         navigator.share({ files: [viewerFile] }).catch(() => { /* cancelled */ });
-      } else if (viewerFile) {
+      } else {
         downloadBlob(viewerFile, viewerFile.name);
+        if (isAndroid()) toast('Saved to your Downloads folder');
       }
       return;
     }
@@ -535,9 +551,27 @@
     }
   }
 
-  const updateBanner = () => (updateWorker
-    ? '<div class="update-banner"><span>A new version of the app is ready.</span><button class="small-btn" data-act="apply-update">Update</button></div>'
-    : '');
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    if (!currentTripId() && !sheet.open) render();
+  });
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    toast('Installed. Open it from your home screen from now on.', 4000);
+    if (!currentTripId() && !sheet.open) render();
+  });
+
+  const updateBanner = () => {
+    if (updateWorker) {
+      return '<div class="update-banner"><span>A new version of the app is ready.</span><button class="small-btn" data-act="apply-update">Update</button></div>';
+    }
+    if (installPrompt && !currentTripId()) {
+      return '<div class="update-banner"><span>Install this app so it opens from your home screen and works offline.</span><button class="small-btn" data-act="install">Install</button></div>';
+    }
+    return '';
+  };
 
   async function renderHome() {
     const [trips, entries] = await Promise.all([liveTrips(), DB.all('entries')]);
@@ -653,6 +687,7 @@
             <h1 class="trip-name">${esc(trip.name)}</h1>
             ${when ? `<p class="trip-when">${esc(when)}</p>` : ''}
             ${trip.location ? `<p class="trip-where">${esc(trip.location)}</p>` : ''}
+            ${speedtypeLine(trip.speedtypes) ? `<p class="trip-where">${esc(speedtypeLine(trip.speedtypes))}</p>` : ''}
             ${trip.url
               ? `<a class="trip-link" href="${esc(trip.url)}" target="_blank" rel="noopener">${esc(linkText)}</a>`
               : '<button class="text-btn trip-link-missing" data-act="edit-trip">Add the conference link</button>'}
@@ -699,6 +734,9 @@
           <input name="name" required autocomplete="off" ${t || isTouch() ? '' : 'autofocus'} placeholder="e.g. ASCB Annual Meeting 2026" value="${esc(t?.name)}"></label>
         <label class="field"><span>Conference website</span>
           <input name="url" type="url" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="https://" value="${esc(t?.url)}"></label>
+        <label class="field"><span>Speedtype(s)</span>
+          ${SPEEDTYPE_INPUT((t?.speedtypes || []).join(', '))}</label>
+        <p class="hint">10-digit numbers for the grants to charge. Separate more than one with commas. If you don't have them yet, you'll be asked again when you export.</p>
         <div class="row">
           <label class="field"><span>First day</span><input name="startDate" type="date" value="${esc(t?.startDate)}"></label>
           <label class="field"><span>Last day</span><input name="endDate" type="date" value="${esc(t?.endDate)}"></label>
@@ -718,6 +756,8 @@
       if (!name) { toast('Add a name for the trip.'); form.name.focus(); return; }
       let url = form.url.value.trim();
       if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+      const sp = parseSpeedtypes(form.speedtypes.value);
+      if (sp.bad.length) { toast(speedtypeError(sp.bad), 5000); form.speedtypes.focus(); return; }
       const cur = form.currency.value.trim().toUpperCase();
       if (cur && !/^[A-Z]{3}$/.test(cur)) { toast('Use a 3-letter currency code, like EUR.'); return; }
       const startDate = form.startDate.value || '';
@@ -726,7 +766,7 @@
       const trip = {
         extras: [], removedFiles: [], createdAt: Date.now(), ...(t || {}),
         id: t?.id || uid(), name, url, startDate, endDate,
-        location: form.location.value.trim(), localCurrency: cur,
+        location: form.location.value.trim(), localCurrency: cur, speedtypes: sp.list,
         updatedAt: Date.now(), deleted: false,
       };
       await DB.put('trips', trip);
@@ -1282,7 +1322,7 @@
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } },
     });
     ws.columns = [
-      { width: 16 }, { width: 14 }, { width: 15 }, { width: 32 }, { width: 38 }, { width: 13 },
+      { width: 17 }, { width: 14 }, { width: 15 }, { width: 32 }, { width: 38 }, { width: 13 },
       { width: 10 }, { width: 15 }, { width: 30 }, { width: 15 }, { width: 11 },
     ];
     const xlDate = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
@@ -1293,12 +1333,15 @@
     ws.getCell(r, 1).font = { bold: true, size: 15 };
     r++;
     const info = [];
-    if (trip.url) info.push(['Conference link', { text: trip.url, hyperlink: trip.url }]);
+    // Always present so finance knows where to look; left blank when none were entered.
+    // Stored as text so leading zeros are kept.
+    info.push(['Speedtype(s):', (trip.speedtypes || []).join(', ') || null]);
+    if (trip.url) info.push(['Conference link:', { text: trip.url, hyperlink: trip.url }]);
     const when = fmtRange(trip.startDate, trip.endDate);
-    if (when) info.push(['Dates', when]);
-    if (trip.location) info.push(['Location', trip.location]);
-    if (settings.traveler) info.push(['Traveler', settings.traveler]);
-    info.push(['Prepared', fmtDate(todayISO())]);
+    if (when) info.push(['Dates:', when]);
+    if (trip.location) info.push(['Location:', trip.location]);
+    if (settings.traveler) info.push(['Traveler:', settings.traveler]);
+    info.push(['Prepared:', fmtDate(todayISO())]);
     for (const [label, value] of info) {
       ws.getCell(r, 1).value = label;
       ws.getCell(r, 1).font = { bold: true };
@@ -1469,15 +1512,32 @@
     const trip = await DB.get('trips', tripId);
     const entries = sortEntries(await tripEntries(tripId));
     const issues = exportIssues(entries);
+    const askSpeedtypes = !(trip.speedtypes && trip.speedtypes.length);
     openSheet(`${sheetHead('Export')}
       <div class="sheet-body">
         <p class="sheet-lede">Creates the expense spreadsheet and one PDF with every receipt in date order. Receipt numbers and PDF pages match the spreadsheet rows.</p>
+        ${askSpeedtypes
+          ? `<label class="field"><span>Speedtype(s)</span>${SPEEDTYPE_INPUT()}</label>
+             <p class="hint">10-digit numbers, separated by commas. They're saved to the trip. Leave this blank if you don't have them; that part of the spreadsheet stays empty.</p>`
+          : `<p class="hint">${esc(speedtypeLine(trip.speedtypes))}. To make changes, edit the trip details.</p>`}
         ${issues.length ? `<ul class="issues">${issues.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
           <p class="hint">You can export anyway and export again after fixing these.</p>` : ''}
         <button type="button" class="btn btn-primary btn-block" data-build>Create spreadsheet and PDF</button>
       </div>`);
     $('[data-build]', sheet).addEventListener('click', async (ev) => {
       const btn = ev.currentTarget;
+      const spInput = $('input[name="speedtypes"]', sheet);
+      if (spInput) {
+        const sp = parseSpeedtypes(spInput.value);
+        if (sp.bad.length) { toast(speedtypeError(sp.bad), 5000); spInput.focus(); return; }
+        if (sp.list.length) {
+          const fresh = await DB.get('trips', tripId);
+          Object.assign(fresh, { speedtypes: sp.list, updatedAt: Date.now() });
+          await DB.put('trips', fresh);
+          trip.speedtypes = sp.list;
+          render();
+        }
+      }
       btn.disabled = true;
       btn.textContent = 'Creating files…';
       try {
@@ -1605,6 +1665,7 @@
   }
 
   const importInput = $('#import-input');
+  if (isAndroid()) importInput.removeAttribute('accept');
   importInput.addEventListener('change', async () => {
     const file = importInput.files[0];
     importInput.value = '';
@@ -1728,6 +1789,12 @@
     else if (act === 'export') openExport(tid);
     else if (act === 'import') importInput.click();
     else if (act === 'settings') openSettings();
+    else if (act === 'install' && installPrompt) {
+      const p = installPrompt;
+      installPrompt = null;
+      p.prompt();
+      Promise.resolve(p.userChoice).catch(() => null).then(() => render());
+    }
     else if (act === 'apply-update' && updateWorker) {
       reloadOnControllerChange = true;
       updateWorker.postMessage('skipWaiting');

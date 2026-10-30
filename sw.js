@@ -1,6 +1,6 @@
 /* Offline support: keeps a copy of the app on the device so it opens without internet.
    When you change any app file, bump CACHE below so devices pick up the new version. */
-const CACHE = 'trip-receipts-v1.1.0';
+const CACHE = 'trip-receipts-v1.2.0';
 const ASSETS = [
   './',
   'index.html',
@@ -13,6 +13,7 @@ const ASSETS = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',
+  'icons/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {

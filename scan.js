@@ -18,6 +18,13 @@
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
   const isTouch = () => matchMedia('(pointer: coarse)').matches;
+  const isAndroid = () => /Android/i.test(navigator.userAgent);
+  // iPhone: the share sheet has "Save Image". Android's share sheet usually doesn't, so download instead.
+  function saveMode(file) {
+    if (isAndroid()) return { label: 'Save image', share: false };
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    return { label: isTouch() && canShare ? 'Save to Photos' : 'Download', share: canShare && isTouch() };
+  }
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
   const ICON = {
@@ -485,16 +492,18 @@
     return dlg;
   }
 
+  // Returns a short status message, or '' when the share sheet handles it
   function saveCopy(file) {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    if (saveMode(file).share) {
       navigator.share({ files: [file] }).catch(() => { /* cancelled */ });
-      return;
+      return '';
     }
     const url = URL.createObjectURL(file);
     const a = document.createElement('a');
     a.href = url; a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return isAndroid() ? 'Saved to your Downloads folder. It also appears in your gallery app.' : 'Downloaded.';
   }
 
   async function open(blob, opts = {}) {
@@ -747,8 +756,7 @@
 
       function showPreview() {
         endStep();
-        const touch = isTouch();
-        const canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([''], 'x.jpg', { type: 'image/jpeg' })] }));
+        const mode = saveMode(new File([''], 'x.jpg', { type: 'image/jpeg' }));
         d.innerHTML = `
           <div class="sc-head">
             <button type="button" class="sc-text" data-a="back">Back</button>
@@ -766,7 +774,7 @@
             </div>
             <button type="button" class="sc-btn sc-icon" data-a="rotl" aria-label="Rotate left">${ICON.left}</button>
             <button type="button" class="sc-btn sc-icon" data-a="rotr" aria-label="Rotate right">${ICON.right}</button>
-            <button type="button" class="sc-btn" data-a="save" disabled>${touch && canShare ? 'Save to Photos' : 'Download'}</button>
+            <button type="button" class="sc-btn" data-a="save" disabled>${mode.label}</button>
           </div>`;
         on(d, 'click', onPreviewClick);
         render();
@@ -786,7 +794,10 @@
         if (a === 'back') showCrop();
         if (a === 'rotl') { st.turns--; render(); }
         if (a === 'rotr') { st.turns++; render(); }
-        if (a === 'save' && st.file) saveCopy(st.file);
+        if (a === 'save' && st.file) {
+          const msg = saveCopy(st.file);
+          if (msg) d.querySelector('.sc-hint').textContent = msg;
+        }
         if (a === 'use' && st.file) finish({ blob: st.file });
       }
 
