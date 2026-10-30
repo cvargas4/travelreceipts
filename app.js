@@ -3,7 +3,7 @@
 'use strict';
 
 (() => {
-  const VERSION = '1.0.2';
+  const VERSION = '1.1.0';
   const CATEGORIES = ['Food', 'Hotel', 'Airfare', 'Transportation', 'Registration', 'Other'];
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'CHF', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'KRW',
     'INR', 'THB', 'BRL', 'ZAR', 'SEK', 'NOK', 'DKK', 'ISK', 'PLN', 'CZK', 'HUF', 'TRY', 'ILS', 'AED'];
@@ -209,7 +209,7 @@
   })();
 
   async function getSettings() {
-    return Object.assign({ key: 'settings', traveler: '', labelPages: true }, await DB.get('meta', 'settings'));
+    return Object.assign({ key: 'settings', traveler: '', labelPages: true, autoScan: true }, await DB.get('meta', 'settings'));
   }
 
   let persistAsked = false;
@@ -340,7 +340,7 @@
 
   // Photos are re-encoded as JPEG (max 2200 px) so they stay legible but small,
   // and so the camera's rotation flag is baked in. Small PNG screenshots are kept as-is.
-  async function processImage(file) {
+  async function processImage(file, opts = {}) {
     const url = URL.createObjectURL(file);
     try {
       let img;
@@ -349,7 +349,10 @@
       }
       const w = img.naturalWidth, h = img.naturalHeight;
       let data, type;
-      if (file.type === 'image/png' && file.size < 1.5e6 && Math.max(w, h) <= 2600) {
+      if (opts.keep && file.type === 'image/jpeg') {
+        data = await file.arrayBuffer();
+        type = 'image/jpeg';
+      } else if (file.type === 'image/png' && file.size < 1.5e6 && Math.max(w, h) <= 2600) {
         data = await file.arrayBuffer();
         type = 'image/png';
       } else {
@@ -363,8 +366,11 @@
     }
   }
 
-  async function processIncoming(file) {
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  const isPdfFile = (file) => file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+  const isImageFile = (file) => (file.type || '').startsWith('image/') || /\.(heic|heif|jpe?g|png|webp|gif|tiff?)$/i.test(file.name || '');
+
+  async function processIncoming(file, opts = {}) {
+    const isPdf = isPdfFile(file);
     if (isPdf) {
       const data = await file.arrayBuffer();
       let pages = null;
@@ -378,8 +384,8 @@
       }
       return { id: uid(), name: file.name, type: 'application/pdf', data, pages, thumb: null, isNew: true };
     }
-    if ((file.type || '').startsWith('image/') || /\.(heic|heif|jpe?g|png|webp|gif|tiff?)$/i.test(file.name)) {
-      const r = await processImage(file);
+    if (isImageFile(file)) {
+      const r = await processImage(file, opts);
       return { id: uid(), name: file.name || 'Photo', type: r.type, data: r.data, thumb: r.thumb, w: r.w, h: r.h, isNew: true };
     }
     throw new Error(`${file.name} isn't a photo or a PDF.`);
@@ -479,13 +485,31 @@
     `<div class="sheet-head">${left}<h2>${esc(title)}</h2>${right}</div>`;
 
   const viewer = $('#viewer');
-  function showImage(buf, type) {
+  let viewerFile = null;
+  function showImage(buf, type, name = 'Receipt') {
     const url = bufToBlobUrl(buf, type);
-    viewer.innerHTML = `<img src="${url}" alt="Receipt"><button type="button">Done</button>`;
+    const ext = type === 'image/png' ? 'png' : 'jpg';
+    viewerFile = new File([buf], `${String(name).replace(/\.[^.]+$/, '') || 'Receipt'}.${ext}`, { type });
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [viewerFile] }));
+    viewer.innerHTML = `<img src="${url}" alt="Receipt">
+      <div class="viewer-bar">
+        <button type="button" data-save>${isTouch() && canShare ? 'Save to Photos' : 'Download'}</button>
+        <button type="button">Done</button>
+      </div>`;
     viewer.showModal();
-    viewer.addEventListener('close', () => URL.revokeObjectURL(url), { once: true });
+    viewer.addEventListener('close', () => { URL.revokeObjectURL(url); viewerFile = null; }, { once: true });
   }
-  viewer.addEventListener('click', () => viewer.close());
+  viewer.addEventListener('click', (e) => {
+    if (e.target.closest('[data-save]')) {
+      if (viewerFile && navigator.canShare && navigator.canShare({ files: [viewerFile] })) {
+        navigator.share({ files: [viewerFile] }).catch(() => { /* cancelled */ });
+      } else if (viewerFile) {
+        downloadBlob(viewerFile, viewerFile.name);
+      }
+      return;
+    }
+    viewer.close();
+  });
 
   /* =========================================================
      Routing & rendering
@@ -730,6 +754,8 @@
       rateSource: existing?.rateSource || null,
       lookupSeq: 0,
     };
+    const settings = await getSettings();
+    const canScan = !!window.ReceiptScanner;
     const defaultCur = existing?.currency || trip.localCurrency || trip.lastCurrency || 'USD';
     const category = existing?.category || 'Food';
     const isHotel = category === 'Hotel';
@@ -822,7 +848,9 @@
         } else {
           inner = `<div class="file-pdf"><strong>PDF</strong><span>${item.pages ? `${item.pages} ${item.pages === 1 ? 'page' : 'pages'}` : ''}</span></div>`;
         }
-        return `<div class="file">${inner}<button type="button" class="file-remove" data-remove="${role}:${item.id}" aria-label="Remove ${esc(item.name)}">${ICON.x}</button></div>`;
+        const adjust = canScan && item.thumb && item.data && item.type !== 'application/pdf'
+          ? `<button type="button" class="file-adjust" data-adjust="${role}:${item.id}">Adjust</button>` : '';
+        return `<div class="file">${inner}${adjust}<button type="button" class="file-remove" data-remove="${role}:${item.id}" aria-label="Remove ${esc(item.name)}">${ICON.x}</button></div>`;
       }).join('');
     }
 
@@ -903,7 +931,17 @@
         st[role].push(placeholder);
         renderTiles(role);
         try {
-          const item = await processIncoming(file);
+          let src = file, keep = false;
+          if (canScan && role === 'receipts' && settings.autoScan && isImageFile(file) && !isPdfFile(file)) {
+            const r = await ReceiptScanner.open(file, { name: file.name });
+            if (!r) { // cancelled: don't add this photo
+              st[role].splice(st[role].indexOf(placeholder), 1);
+              renderTiles(role);
+              continue;
+            }
+            if (r.blob) { src = r.blob; keep = true; }
+          }
+          const item = await processIncoming(src, { keep });
           st[role].splice(st[role].indexOf(placeholder), 1, item);
           st.dirty = true;
         } catch (err) {
@@ -947,11 +985,30 @@
         renderTiles(role);
         return;
       }
+      const adj = e.target.closest('[data-adjust]');
+      if (adj) {
+        const [role, id] = adj.dataset.adjust.split(':');
+        const idx = st[role].findIndex((i) => i.id === id);
+        const item = st[role][idx];
+        if (!item || !item.data) return;
+        try {
+          const r = await ReceiptScanner.open(new Blob([item.data], { type: item.type }), { name: item.name, allowOriginal: false });
+          if (!r || !r.blob) return;
+          const fresh = await processIncoming(r.blob, { keep: true });
+          const at = st[role].findIndex((i) => i.id === id);
+          if (at >= 0) st[role].splice(at, 1, fresh);
+          st.dirty = true;
+          renderTiles(role);
+        } catch (err) {
+          toast(err.message, 4500);
+        }
+        return;
+      }
       const view = e.target.closest('[data-view]');
       if (view) {
         const [role, id] = view.dataset.view.split(':');
         const item = st[role].find((i) => i.id === id);
-        if (item && item.data) showImage(item.data, item.type);
+        if (item && item.data) showImage(item.data, item.type, item.name);
         return;
       }
       if (e.target.closest('[data-lookup]')) { lookupRate(false); return; }
@@ -1096,7 +1153,7 @@
       }));
       $$('[data-view]', sheet).forEach((b) => b.addEventListener('click', () => {
         const it = items.find((i) => i.id === b.dataset.view);
-        if (it && it.data) showImage(it.data, it.type);
+        if (it && it.data) showImage(it.data, it.type, it.name);
       }));
     };
     await draw();
@@ -1635,6 +1692,8 @@
           <input name="traveler" autocomplete="name" placeholder="Shown at the top of the spreadsheet" value="${esc(s.traveler)}"></label>
         <label class="switch-row"><span>Label each PDF page with its receipt number, date, and amount</span>
           <input type="checkbox" name="labelPages" ${s.labelPages ? 'checked' : ''}></label>
+        <label class="switch-row"><span>Open the scanner after taking or choosing a receipt photo</span>
+          <input type="checkbox" name="autoScan" ${s.autoScan ? 'checked' : ''}></label>
         <ul class="menu"><li><button type="button" data-all-backup>Back up all trips</button></li></ul>
         <p class="hint">Data is stored only in this browser on this device${usage ? ` (${esc(usage)})` : ''}. Clearing Safari’s website data deletes it, so keep a backup of trips you still need.</p>
         <p class="hint">Version ${VERSION}</p>
@@ -1644,7 +1703,7 @@
     $('[data-all-backup]', sheet).addEventListener('click', () => backupFlow(null));
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      await DB.put('meta', { ...s, traveler: form.traveler.value.trim(), labelPages: form.labelPages.checked });
+      await DB.put('meta', { ...s, traveler: form.traveler.value.trim(), labelPages: form.labelPages.checked, autoScan: form.autoScan.checked });
       closeSheet(true);
       toast('Settings saved');
     });

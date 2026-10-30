@@ -13,7 +13,7 @@ Everything you enter stays in the browser on your device. Nothing is uploaded an
 
 GitHub only serves the app's code. Your receipts never go to GitHub.
 
-1. Unzip the download. You should see `index.html`, `app.js`, `app.css`, `sw.js`, `manifest.webmanifest`, and the `icons` and `vendor` folders.
+1. Unzip the download. You should see `index.html`, `app.js`, `scan.js`, `app.css`, `sw.js`, `manifest.webmanifest`, and the `icons` and `vendor` folders.
 2. On github.com, click **New repository**.
    - Name: `trip-receipts` (or anything you like)
    - Visibility: **Public**. GitHub Pages is free for public repositories. The code is public, your data is not; it never leaves your devices.
@@ -38,6 +38,7 @@ After the first visit, the app works with no internet connection.
 - **Add receipt:** take a photo or pick a photo/PDF, choose a category, enter the date, vendor and location, and amount.
   - **Hotel:** enter check-in and check-out. It's listed on the check-out date.
   - **Foreign currency:** the exchange rate for that date is looked up automatically. If you enter the **USD charged on your card**, that's used instead. You can attach a **card statement screenshot**; it goes in the PDF right after that receipt.
+- **Scanner:** after you take or choose a receipt photo, the scanner opens. It finds the receipt's edges (drag the corners to fix them; a magnifier shows what's under your finger), flattens the angle, and offers three looks: **Clean** (evens out shadows, white paper), **Grayscale**, or **Original**. **Save to Photos** puts a copy in your camera roll (choose "Save Image" in the share sheet). Tap **Adjust** on any photo later to scan it again. You can turn off the automatic scanner in Settings.
 - **Edit anything, any time.** Tap a receipt to change it or delete it.
 - **Extra pages** (trip menu `•••`): pages that go at the end of the PDF, such as a statement covering several charges or a registration confirmation.
 - **Export:** creates the spreadsheet and PDF. Receipt numbers and PDF page numbers match the spreadsheet rows. Remembered a receipt later? Add it and export again.
@@ -56,7 +57,7 @@ Merging combines both sides. New receipts are added, the newer edit wins if a re
 If you (or Claude) change any file:
 
 1. Upload the changed files to the repository (same "Add file → Upload files" flow; GitHub replaces files with the same name).
-2. In `sw.js`, change the version in `const CACHE = 'trip-receipts-v1.0.2';` (e.g. to `v1.0.3`) and upload it too.
+2. In `sw.js`, change the version in `const CACHE = 'trip-receipts-v1.1.0';` (e.g. to `v1.1.1`) and upload it too.
 
 Your devices will show "A new version of the app is ready" with an **Update** button. Your data isn't affected by updates.
 

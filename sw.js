@@ -1,11 +1,12 @@
 /* Offline support: keeps a copy of the app on the device so it opens without internet.
    When you change any app file, bump CACHE below so devices pick up the new version. */
-const CACHE = 'trip-receipts-v1.0.2';
+const CACHE = 'trip-receipts-v1.1.0';
 const ASSETS = [
   './',
   'index.html',
   'app.css',
   'app.js',
+  'scan.js',
   'manifest.webmanifest',
   'vendor/exceljs.min.js',
   'vendor/pdf-lib.min.js',
