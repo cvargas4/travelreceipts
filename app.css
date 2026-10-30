@@ -375,6 +375,15 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   border: 0; background: rgb(0 0 0 / 0.6); color: #fff; display: grid; place-items: center;
 }
 .file-remove svg { width: 16px; height: 16px; }
+.file-badge {
+  position: absolute; left: 5px; bottom: 5px; padding: 3px 8px; border-radius: 999px;
+  background: rgb(0 0 0 / 0.62); color: #fff; font-size: 12px; font-weight: 700; pointer-events: none;
+}
+.thumb-wrap { position: relative; display: block; width: 50px; height: 50px; }
+.thumb-badge {
+  position: absolute; left: 3px; bottom: 3px; padding: 1px 5px; border-radius: 6px;
+  background: rgb(0 0 0 / 0.65); color: #fff; font-size: 10px; font-weight: 700; line-height: 1.4;
+}
 .file.busy { display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 .file-adjust {
   position: absolute; left: 5px; bottom: 5px; border: 0; border-radius: 999px;
@@ -419,6 +428,19 @@ dialog#viewer {
 }
 dialog#viewer[open] { display: grid; place-items: center; }
 dialog#viewer img { max-width: 100vw; max-height: 100dvh; object-fit: contain; }
+dialog#viewer.pdf { background: #0E1417; }
+dialog#viewer.pdf[open] { display: block; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+dialog#viewer.pdf .viewer-bar {
+  left: 0; right: 0; top: 0; z-index: 1;
+  padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
+  background: rgb(14 20 23 / 0.94);
+}
+.viewer-pages {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: calc(env(safe-area-inset-top) + 72px) 12px calc(env(safe-area-inset-bottom) + 24px);
+}
+.viewer-page { display: block; width: 100%; max-width: 900px; height: auto; background: #fff; }
+.viewer-status { color: #fff; opacity: 0.8; text-align: center; margin: 24px 0; }
 .viewer-bar {
   position: fixed; top: calc(env(safe-area-inset-top) + 10px); left: 12px; right: 12px;
   display: flex; justify-content: space-between; gap: 12px;

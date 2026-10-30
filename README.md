@@ -1,7 +1,3 @@
-## Claude-coded (Opus 5.5) receipt tracker for conferences.
-
------------
-
 # Trip Receipts
 
 A small web app for collecting conference travel receipts on your phone or computer, then exporting everything your finance office needs in one step:
@@ -85,6 +81,8 @@ Open the trip and tap **Add receipt**.
 3. Enter the date, the vendor and location, and the amount.
 4. Optionally add a card statement screenshot and notes.
 5. Tap **Save**.
+
+Photos and PDFs both show a preview. Tap one to view it full screen; a PDF opens with all of its pages, and you can save a copy from there.
 
 Purchases missing a receipt image, an amount, or an exchange rate are flagged in the list so you can fix them before exporting.
 
@@ -179,4 +177,4 @@ When a new version of the app is available, a banner appears at the top of the a
 
 ---
 
-Third-party libraries bundled with the app: [ExcelJS](https://github.com/exceljs/exceljs) (MIT license) and [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT license). Their license files are in the `vendor` folder.
+Third-party libraries bundled with the app: [ExcelJS](https://github.com/exceljs/exceljs) (MIT license), [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT license), and [PDF.js](https://github.com/mozilla/pdf.js) (Apache License 2.0). Their license files are in the `vendor` folder.

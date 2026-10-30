@@ -3,7 +3,7 @@
 'use strict';
 
 (() => {
-  const VERSION = '1.2.1';
+  const VERSION = '1.3.0';
   const CATEGORIES = ['Food', 'Hotel', 'Airfare', 'Transportation', 'Registration', 'Other'];
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'CHF', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'KRW',
     'INR', 'THB', 'BRL', 'ZAR', 'SEK', 'NOK', 'DKK', 'ISK', 'PLN', 'CZK', 'HUF', 'TRY', 'ILS', 'AED'];
@@ -394,7 +394,11 @@
         if (/Couldn't load/.test(err.message)) throw err;
         throw new Error(`${file.name} couldn't be read as a PDF.`);
       }
-      return { id: uid(), name: file.name, type: 'application/pdf', data, pages, thumb: null, isNew: true };
+      let thumb = null;
+      try { thumb = await pdfThumb(data); } catch (err) { console.warn('PDF preview failed', err); }
+      const id = uid();
+      if (!thumb) noPreview.add(id);
+      return { id, name: file.name, type: 'application/pdf', data, pages, thumb, isNew: true };
     }
     if (isImageFile(file)) {
       const r = await processImage(file, opts);
@@ -411,8 +415,74 @@
   async function saveNewFiles(items) {
     const fresh = items.filter((i) => i.isNew);
     await DB.putMany('files', fresh.map(fileRecord));
-    await DB.putMany('thumbs', fresh.filter((i) => i.thumb).map((i) => ({ id: i.id, data: i.thumb })));
+    await DB.putMany('thumbs', fresh.filter((i) => i.thumb).map((i) => ({ id: i.id, data: i.thumb, pdf: i.type === 'application/pdf' })));
     fresh.forEach((i) => { i.isNew = false; });
+  }
+
+  /* PDF previews: PDF.js draws PDF pages (pdf-lib can only build PDFs). Loaded on first use. */
+  const PDFJS_SRC = 'vendor/pdfjs/pdf.min.mjs';
+  const PDFJS_WORKER = 'vendor/pdfjs/pdf.worker.min.mjs';
+  let pdfjsP = null;
+  function loadPdfJs() {
+    if (!pdfjsP) {
+      pdfjsP = import(new URL(PDFJS_SRC, location.href).href).then((m) => {
+        m.GlobalWorkerOptions.workerSrc = new URL(PDFJS_WORKER, location.href).href;
+        return m;
+      }).catch((err) => { pdfjsP = null; throw err; });
+    }
+    return pdfjsP;
+  }
+  async function openPdfDoc(buf) {
+    const pdfjs = await loadPdfJs();
+    // PDF.js takes ownership of the buffer it's given, so hand it a copy
+    const task = pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)), isEvalSupported: false });
+    const doc = await task.promise;
+    doc._loadingTask = task;
+    return doc;
+  }
+  function closePdfDoc(doc) {
+    try {
+      if (typeof doc.destroy === 'function') doc.destroy();
+      else if (doc._loadingTask) doc._loadingTask.destroy();
+    } catch { /* already closed */ }
+  }
+  async function renderPdfPage(doc, pageNo, maxDim) {
+    const page = await doc.getPage(pageNo);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: maxDim / Math.max(base.width, base.height) });
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.floor(viewport.width));
+    c.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: ctx, viewport, canvas: c }).promise;
+    page.cleanup();
+    return c;
+  }
+  async function pdfThumb(buf) {
+    const doc = await openPdfDoc(buf);
+    try {
+      return await canvasToBuf(await renderPdfPage(doc, 1, 320), 'image/jpeg', 0.72);
+    } finally {
+      closePdfDoc(doc);
+    }
+  }
+  // PDFs saved before previews existed get one the first time they're shown
+  const thumbJobs = new Map();
+  const noPreview = new Set(); // PDFs that couldn't be drawn (they still export normally)
+  function ensurePdfThumb(id) {
+    if (!thumbJobs.has(id)) {
+      thumbJobs.set(id, (async () => {
+        if (await DB.get('thumbs', id)) return true;
+        const f = await DB.get('files', id);
+        if (!f || f.type !== 'application/pdf') return false;
+        await DB.put('thumbs', { id, data: await pdfThumb(f.data), pdf: true });
+        return true;
+      })().then((ok) => { if (!ok) noPreview.add(id); return ok; })
+        .catch((err) => { console.warn('PDF preview failed', err); noPreview.add(id); return false; }));
+    }
+    return thumbJobs.get(id);
   }
 
   async function loadItems(ids) {
@@ -424,6 +494,22 @@
       out.push({ ...f, thumb: t ? t.data : null, isNew: false });
     }
     return out;
+  }
+
+  // Tile inner markup for an attached file. `key` goes in data-view.
+  function fileTileInner(item, key, urls) {
+    if (item.missing) return '<div class="file-pdf"><strong>Missing</strong><span>Merge the backup that has it</span></div>';
+    const isPdf = item.type === 'application/pdf';
+    const badge = isPdf ? `<span class="file-badge">PDF${item.pages > 1 ? `, ${item.pages} pages` : ''}</span>` : '';
+    let pic;
+    if (item.thumb) {
+      const u = bufToBlobUrl(item.thumb, 'image/jpeg');
+      urls.push(u);
+      pic = `<img src="${u}" alt="">`;
+    } else {
+      pic = `<div class="file-pdf"><strong>PDF</strong>${noPreview.has(item.id) ? '' : '<span>Preparing preview…</span>'}</div>`;
+    }
+    return `<button type="button" class="file-open" data-view="${key}" aria-label="View ${esc(item.name)}">${pic}</button>${badge}`;
   }
 
   /* =========================================================
@@ -499,6 +585,50 @@
   const viewer = $('#viewer');
   const isAndroid = () => /Android/i.test(navigator.userAgent);
   let viewerFile = null;
+  let viewerDoc = null;
+  function showFile(item) {
+    if (item.type === 'application/pdf') showPdf(item.data, item.name);
+    else showImage(item.data, item.type, item.name);
+  }
+
+  async function showPdf(buf, name = 'Receipt.pdf') {
+    viewerFile = new File([buf], /\.pdf$/i.test(name) ? name : `${name}.pdf`, { type: 'application/pdf' });
+    const share = !isAndroid() && isTouch() && navigator.canShare && navigator.canShare({ files: [viewerFile] });
+    viewer.classList.add('pdf');
+    viewer.innerHTML = `<div class="viewer-bar">
+        <button type="button" data-save>${share ? 'Share or save' : 'Save PDF'}</button>
+        <button type="button" data-done>Done</button>
+      </div>
+      <div class="viewer-pages"><p class="viewer-status">Opening PDF…</p></div>`;
+    viewer.showModal();
+    viewer.addEventListener('close', () => {
+      viewer.classList.remove('pdf');
+      viewerFile = null;
+      if (viewerDoc) { closePdfDoc(viewerDoc); viewerDoc = null; }
+    }, { once: true });
+    const box = viewer.querySelector('.viewer-pages');
+    try {
+      const doc = await openPdfDoc(buf);
+      if (!viewer.open) { closePdfDoc(doc); return; }
+      viewerDoc = doc;
+      box.innerHTML = '';
+      const width = Math.min(1600, Math.round(Math.min(window.innerWidth, 900) * Math.min(2, window.devicePixelRatio || 1)));
+      const n = Math.min(doc.numPages, 40);
+      for (let p = 1; p <= n; p++) {
+        if (!viewer.open || viewerDoc !== doc) return;
+        const c = await renderPdfPage(doc, p, width);
+        c.className = 'viewer-page';
+        c.setAttribute('role', 'img');
+        c.setAttribute('aria-label', `Page ${p} of ${doc.numPages}`);
+        box.appendChild(c);
+      }
+      if (doc.numPages > n) box.insertAdjacentHTML('beforeend', `<p class="viewer-status">Showing the first ${n} of ${doc.numPages} pages.</p>`);
+    } catch (err) {
+      console.error(err);
+      box.innerHTML = '<p class="viewer-status">This PDF can\'t be shown here, but it will still be included in the export.</p>';
+    }
+  }
+
   function showImage(buf, type, name = 'Receipt') {
     const url = bufToBlobUrl(buf, type);
     const ext = type === 'image/png' ? 'png' : 'jpg';
@@ -524,6 +654,8 @@
       }
       return;
     }
+    // a multi-page PDF scrolls, so only Done closes it; a photo closes on any tap
+    if (viewer.classList.contains('pdf') && !e.target.closest('[data-done]')) return;
     viewer.close();
   });
 
@@ -640,7 +772,9 @@
       if (thumbs[i]) {
         const url = bufToBlobUrl(thumbs[i].data, 'image/jpeg');
         renderUrls.push(url);
-        thumbHtml = `<img class="thumb" src="${url}" alt="">`;
+        thumbHtml = thumbs[i].pdf
+          ? `<span class="thumb-wrap"><img class="thumb" src="${url}" alt=""><span class="thumb-badge">PDF</span></span>`
+          : `<img class="thumb" src="${url}" alt="">`;
       } else if (hasReceipt) {
         thumbHtml = '<span class="thumb">PDF</span>';
       } else {
@@ -674,6 +808,16 @@
       ? fmtMoney(items.reduce((s, [e]) => s + (usdOf(e) || 0), 0)) : '—');
     const when = fmtRange(trip.startDate, trip.endDate);
     const linkText = trip.url ? trip.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
+
+    // older PDFs without a preview: make them in the background, then redraw once
+    const missing = entries.filter((e, i) => !thumbs[i] && e.receipts && e.receipts[0]).map((e) => e.receipts[0]);
+    if (missing.length) {
+      (async () => {
+        let made = false;
+        for (const fid of missing) made = (await ensurePdfThumb(fid)) || made;
+        if (made && location.hash === `#/trip/${id}` && !sheet.open) render();
+      })();
+    }
 
     app.innerHTML = `
       <main class="wrap">
@@ -878,16 +1022,7 @@
       const box = $(`[data-files="${role}"]`, sheet);
       box.innerHTML = st[role].map((item) => {
         if (item.busy) return '<div class="file busy">Adding…</div>';
-        let inner;
-        if (item.thumb) {
-          const u = bufToBlobUrl(item.thumb, 'image/jpeg');
-          tileUrls.push(u);
-          inner = `<button type="button" class="file-open" data-view="${role}:${item.id}" aria-label="View ${esc(item.name)}"><img src="${u}" alt=""></button>`;
-        } else if (item.missing) {
-          inner = '<div class="file-pdf"><strong>Missing</strong><span>Merge the backup that has it</span></div>';
-        } else {
-          inner = `<div class="file-pdf"><strong>PDF</strong><span>${item.pages ? `${item.pages} ${item.pages === 1 ? 'page' : 'pages'}` : ''}</span></div>`;
-        }
+        const inner = fileTileInner(item, `${role}:${item.id}`, tileUrls);
         const adjust = canScan && item.thumb && item.data && item.type !== 'application/pdf'
           ? `<button type="button" class="file-adjust" data-adjust="${role}:${item.id}">Adjust</button>` : '';
         return `<div class="file">${inner}${adjust}<button type="button" class="file-remove" data-remove="${role}:${item.id}" aria-label="Remove ${esc(item.name)}">${ICON.x}</button></div>`;
@@ -994,6 +1129,19 @@
 
     renderTiles('receipts');
     renderTiles('statements');
+    // older PDFs: make their preview now
+    for (const role of ['receipts', 'statements']) {
+      st[role].filter((i) => i.type === 'application/pdf' && !i.thumb && !i.isNew).forEach((i) => {
+        ensurePdfThumb(i.id).then(async (ok) => {
+          if (!sheet.open) return;
+          const cur = st[role].find((x) => x.id === i.id);
+          if (!cur) return;
+          const t = ok ? await DB.get('thumbs', i.id) : null;
+          if (t) cur.thumb = t.data;
+          renderTiles(role);
+        });
+      });
+    }
     updateWhen();
     updateFx();
     if (needsRate({ currency: getCurrency(), amount: 1, usd: parseAmount(val('usd')), rate: parseAmount(val('rate')) }) && navigator.onLine) {
@@ -1048,7 +1196,7 @@
       if (view) {
         const [role, id] = view.dataset.view.split(':');
         const item = st[role].find((i) => i.id === id);
-        if (item && item.data) showImage(item.data, item.type, item.name);
+        if (item && item.data) showFile(item);
         return;
       }
       if (e.target.closest('[data-lookup]')) { lookupRate(false); return; }
@@ -1142,16 +1290,7 @@
       const items = await loadItems(trip.extras);
       const urls = [];
       const tiles = items.map((it) => {
-        let inner;
-        if (it.thumb) {
-          const u = bufToBlobUrl(it.thumb, 'image/jpeg');
-          urls.push(u);
-          inner = `<button type="button" class="file-open" data-view="${it.id}" aria-label="View ${esc(it.name)}"><img src="${u}" alt=""></button>`;
-        } else if (it.missing) {
-          inner = '<div class="file-pdf"><strong>Missing</strong></div>';
-        } else {
-          inner = `<div class="file-pdf"><strong>PDF</strong><span>${it.pages ? `${it.pages} ${it.pages === 1 ? 'page' : 'pages'}` : ''}</span></div>`;
-        }
+        const inner = fileTileInner(it, it.id, urls);
         return `<div class="file">${inner}<button type="button" class="file-remove" data-remove="${it.id}" aria-label="Remove ${esc(it.name)}">${ICON.x}</button></div>`;
       }).join('');
       openSheet(`${sheetHead('Extra pages')}
@@ -1162,6 +1301,12 @@
           <input type="file" class="sr-only" accept="image/*,application/pdf,.pdf" multiple data-input tabindex="-1">
         </div>`);
       sheetCleanup.push(() => urls.forEach((u) => URL.revokeObjectURL(u)));
+      const pending = items.filter((i) => i.type === 'application/pdf' && !i.thumb && !noPreview.has(i.id));
+      if (pending.length) {
+        Promise.all(pending.map((i) => ensurePdfThumb(i.id))).then((oks) => {
+          if (sheet.open && $('.sheet-head h2', sheet)?.textContent === 'Extra pages') draw();
+        });
+      }
       $('[data-pick]', sheet).addEventListener('click', () => $('[data-input]', sheet).click());
       $('[data-input]', sheet).addEventListener('change', async (ev) => {
         const files = [...ev.target.files];
@@ -1193,7 +1338,7 @@
       }));
       $$('[data-view]', sheet).forEach((b) => b.addEventListener('click', () => {
         const it = items.find((i) => i.id === b.dataset.view);
-        if (it && it.data) showImage(it.data, it.type, it.name);
+        if (it && it.data) showFile(it);
       }));
     };
     await draw();
@@ -1671,7 +1816,7 @@
       if (!f) continue;
       const { thumb, ...meta } = f;
       await DB.put('files', { ...meta, data: base64ToBuf(f.data) });
-      if (thumb) await DB.put('thumbs', { id, data: base64ToBuf(thumb) });
+      if (thumb) await DB.put('thumbs', { id, data: base64ToBuf(thumb), pdf: meta.type === 'application/pdf' });
       stats.files++;
     }
     await collectGarbage();
